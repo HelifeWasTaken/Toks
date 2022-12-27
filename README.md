@@ -99,7 +99,7 @@ The order of tokens matter so make sure to put them in order for example:
 ```cpp
     tokenizer.add_keyword("==", ...);
     tokenizer.add_keyword("=", ...);
-    // This works because if there is "==" there can still be one "=" so make sure to check the order of your tokens
+    // This works because if there is no "==" there can still be one "=" so make sure to check the order of your tokens
 ```
 
 For this kind of use you can forbid the parser to parse default identifiers like so: `tokenizer.tokenize("...", false);`
