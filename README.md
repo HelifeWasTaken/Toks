@@ -21,7 +21,7 @@ int main()
 {
     hl::Toks tokenizer;
 
-    tokenizer.add_begin_end_pair("{", "}", true, true, 1); // Keep the start end the end
+    tokenizer.add_begin_end_pair("/*", "*/", true, true, 1); // Keep the start end the end
     
     //
     // TokenBeginEndPair comment("/*", "*/"); If you want to keep the begin and end strings -> "/* this is a comment */"
