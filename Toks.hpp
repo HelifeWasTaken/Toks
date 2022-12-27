@@ -128,16 +128,16 @@ public:
 
 // Represents a token that has been parsed from a string
 struct TokenInfo {
-    int type, token_type; // type is the parser that parsed the token, token_type is the type of the token
+    int token_type, type; // type is the parser that parsed the token, token_type is the type of the token
     std::string value; // the value of the token
     size_t line, column; // the line and column of the token
 };
 
 // Base class for all token parsers
 enum TokenParserType {
-    Keyword, // a keyword
-    BeginEndPair, // a pair of begin and end strings
-    Identifer // an identifier
+    Keyword = -1, // a keyword
+    BeginEndPair = -2, // a pair of begin and end strings
+    Identifer = -3 // an identifier
 };
 
 // Base class for all token parsers
@@ -422,7 +422,7 @@ public:
             if (!allow_default_identifiers) {
                 throw TokenizerError(stream.line(), stream.column());
             }
-            auto token = new TokenInfo { m_default_type, m_default_type, "", stream.line(), stream.column() };
+            auto token = new TokenInfo { m_default_type, Identifer, "", stream.line(), stream.column() };
 
             while (!stream.eof() && !stream.is_whitespace()) {
                 token->value += stream.peek();
@@ -446,7 +446,5 @@ public:
         return tokens;
     }
 };
-
-using Toks = Tokenizer;
 
 }
