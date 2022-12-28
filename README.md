@@ -21,7 +21,7 @@ int main()
 {
     hl::Toks tokenizer;
 
-    tokenizer.add_begin_end_pair("/*", "*/", true, true, 1); // Keep the start end the end
+    tokenizer.add_begin_end_pair("/*", "*/", true, true, 1 /* the token type */);
     
     //
     // TokenBeginEndPair comment("/*", "*/"); If you want to keep the begin and end strings -> "/* this is a comment */"
@@ -39,6 +39,40 @@ int main()
         else
             std::cout << "This is a comment: " << token.value << std::endl;
     }
+}
+```
+
+## Splitting everything by either words, either the regex match:
+```cpp
+int main()
+{
+    hl::Toks tokenizer;
+    
+    tokenizer.add_regex("[a-z][A-Z][0-9]", 1);
+}
+```
+
+## Chose between parse until next parser matches or parse as words:
+```cpp
+int main()
+{
+    hl::Toks tokenizer;
+    
+    tokenizer.set_default_as_words(); // Is already set as words by default
+    
+    tokenizer.tokenize("Hello world"); // Outputs ["Hello", "World"]
+    
+    tokenizer.set_default_as_until_parser_matches(); // Parse the string a parser matches the input
+    
+    tokenizer.tokenize("Hello world"); // Outputs ["Hello World"] as there is no parser
+
+    tokenizer.add_keyword("rl");
+    
+    tokenizer.set_default_as_words();
+    tokenizer.tokenize("Hello world"); // Outputs ["Hello", "World"]
+    
+    tokenizer.set_default_as_until_parser_matches();
+    tokenizer.tokenize("Hello world"); // Outputs ["Hello wo", "rl", "d"]
 }
 ```
 
@@ -109,12 +143,21 @@ For this kind of use you can forbid the parser to parse default identifiers like
 
 As you saw this might feel limited so it is possible to add your own parsers to the tokenizer
 ```cpp
-class NumberParser : public TokenParser {
+class IdentifierParser : public TokenParser {
 public:
-    NumberParser(int type=-1) : TokenParser(type) {}
+    IdentifierParser(int type=-1) : TokenParser(type) {}
     
     virtual int parser_type() const override {
-        return 0; // Parser identifier user defined - Reserved ones are -1, -2, -3 as they are the builtin parsers
+        return 0; // Parser identifier user defined - Reserved ones are negative values as they are the builtin parsers
+    }
+
+    bool is_valid_char(char c, bool is_first_character) const {
+        if (std::isalpha(c) || c == '_') {
+            return true;
+        }
+        if (is_first_character)
+            return false;
+        return std::isdigit(c);
     }
 };
 
@@ -123,22 +166,22 @@ int main(void)
     hl::Toks tokenizer;
 
     // You must register a callback for your parser
-    // The parser is passed as parameter in case you had specific options
-    // for there it can be ignored
     // The callback must return either null if the parser does not work here
     // Or a new valid allocated pointer to a TokenInfo make sure to fill it well
     tokenizer.register_parser_callback(0,
         [](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
-            // we would have static casted the token parser if it has specific parameters to get
-            char c = s.peek(); // get the current character
-            if (!isdigit(c))
+            auto& identifier = static_cast<IdentifierParser&>(parser);
+            if (!identifier.is_valid_char(s.peek(), true))
                 return nullptr;
             auto tok = new TokenInfo { parser.token_type(), "", s.line(), s.column() }; // A new TokenInfo featuring the 
-            while (isdigit(c) && !s.eof()) {
-                tok.value += c;
+            do {
+                tok->value += s.peek();
                 s.next(); // Continue to the next value of stream
-            }
-            return tok;
+            } while (!s.eof() && identifier.is_valid_char(s.peek(), false));
+            if (s.eof() || s.is_whitespace()) // to be a valid identifier you need to have a space at the end or an eof
+                return tok;
+            delete tok;
+            return nullptr;
        }
     );
     // FileTokenStream::next can take a size_t as parameter to specify how many characters to shift
@@ -149,8 +192,8 @@ int main(void)
     
     // You can then use it like so:
     
-    tokenizer.add_parser(new NumberParser());
+    tokenizer.add_parser(new IdentifierParser());
     // or
-    tokenizer.add_parser(std::move(std::make_unique<NumberParser>()));
+    tokenizer.add_parser(std::move(std::make_unique<IdentifierParser>()));
 }
 ```
