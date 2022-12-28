@@ -3,6 +3,9 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
+#include <stack>
+#include <tuple>
+#include <regex>
 
 namespace hl {
 
@@ -25,6 +28,8 @@ private:
     size_t m_pos = 0;
     size_t m_line = 0;
     size_t m_column = 0;
+
+    std::stack<std::tuple<size_t, size_t, size_t>> m_stack_states;
 
 public:
     // Create a token stream from a string
@@ -110,17 +115,42 @@ public:
         for (; !eof() && is_whitespace(); next());
     }
 
+    // checks if the current position starts with the given string
     bool starts_with(const std::string& str) const {
         return m_string.compare(m_pos, str.size(), str) == 0;
     }
 
+    // finds the first occurence of the given string, starting at the current position
     size_t find(const std::string& str, size_t pos=0) const {
         // start at m_pos, and find the first occurence of str
         return m_string.find(str, m_pos + pos) - m_pos;
     }
 
+    // Substring from the current position
     std::string substr(size_t pos, size_t len) const {
         return m_string.substr(m_pos + pos, len);
+    }
+
+    // Checks if the given regex matches the current position
+    bool regex_match(const std::regex& regex, std::smatch& match) const {
+        return std::regex_search(m_string.cbegin() + m_pos, m_string.cend(), match, regex);
+    }
+
+    // Stores the current position, line and column (so that it can be restored later)
+    void push_state() {
+        m_stack_states.push(std::make_tuple(m_pos, m_line, m_column));
+    }
+
+    // Frees the stored state, and optionally restores it
+    // It restores the position, line and column by default
+    void pop_state(bool restore=true) {
+        if (restore) {
+            auto state = m_stack_states.top();
+            m_pos = std::get<0>(state);
+            m_line = std::get<1>(state);
+            m_column = std::get<2>(state);
+        }
+        m_stack_states.pop();
     }
 };
 
@@ -135,7 +165,9 @@ struct TokenInfo {
 enum TokenParserType {
     Keyword = -1, // a keyword
     BeginEndPair = -2, // a pair of begin and end strings
-    Default = -3 // a default parsing (used for parsing either words either until a parser matches)
+    Regex = -3, // a regex
+    Combinator = -4, // a combinator
+    Default = -5 // a default parsing (used for parsing either words either until a parser matches)
 };
 
 // Base class for all token parsers
@@ -148,6 +180,7 @@ protected:
     TokenParser(int type) : m_token_type(type) {}
 
 public:
+    // Destructor
     virtual ~TokenParser() = default;
 
     // returns the type of the parser
@@ -171,7 +204,7 @@ public:
         : TokenParser(type), m_keyword(keyword)
     {}
 
-    // returns the keyword
+    // Destructor
     virtual ~TokenKeyword() = default;
 
     // returns the keyword
@@ -245,8 +278,68 @@ public:
         return BeginEndPair;
     }
 
-    // returns the type of the parser
+    // Destructor
     virtual ~TokenBeginEndPair() = default;
+};
+
+class RegexTokenParser : public TokenParser {
+private:
+    // the regex to parse
+    std::regex m_regex;
+
+public:
+    // create a new regex parser
+    RegexTokenParser(const std::string& regex, int type=-1)
+        : TokenParser(type), m_regex(regex)
+    {}
+
+    // returns the regex
+    const std::regex& regex() const {
+        return m_regex;
+    }
+
+    // returns the type of the parser
+    virtual int parser_type() const override {
+        return Regex;
+    }
+
+    // Destructor
+    virtual ~RegexTokenParser() = default;
+};
+
+class CombinatorTokenParser : public TokenParser {
+private:
+    // the parsers to combine
+    std::vector<std::unique_ptr<TokenParser>> m_parsers;
+
+public:
+    // create a new combinator parser
+    CombinatorTokenParser(int type=-1)
+        : TokenParser(type)
+    {}
+
+    // Add a parser to the combinator
+    void add_parser(std::unique_ptr<TokenParser>&& parser) {
+        m_parsers.push_back(std::move(parser));
+    }
+
+    // Add a parser to the combinator
+    void add_parser(TokenParser* parser) {
+        m_parsers.push_back(std::unique_ptr<TokenParser>(parser));
+    }
+
+    // returns the parsers
+    const std::vector<std::unique_ptr<TokenParser>>& parsers() const {
+        return m_parsers;
+    }
+
+    // returns the type of the parser
+    virtual int parser_type() const override {
+        return Combinator;
+    }
+
+    // Destructor
+    virtual ~CombinatorTokenParser() = default;
 };
 
 // The tokenizer class is used to parse a string into tokens
@@ -351,6 +444,45 @@ public:
                 return token;
             }
         );
+
+        register_parser_callback(Regex,
+            [](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
+                auto& regex = static_cast<RegexTokenParser&>(parser);
+
+                std::smatch match;
+                if (s.regex_match(regex.regex(), match)) {
+                    if (match.size() == 0) {
+                        return nullptr;
+                    }
+                    auto token = new TokenInfo { regex.token_type(), match.str(), s.line(), s.column() };
+                    s.next(match.position() + match.length());
+                    return token;
+                }
+                return nullptr;
+            }
+        );
+
+        register_parser_callback(Combinator,
+            [this](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
+                auto& combinator = static_cast<CombinatorTokenParser&>(parser);
+                s.push_state();
+
+                auto token = new TokenInfo { combinator.token_type(), "", s.line(), s.column() };
+
+                for (auto& p : combinator.parsers()) {
+                    auto info = this->m_callbacks[p->parser_type()](s, *p);
+
+                    if (info == nullptr) {
+                        s.pop_state();
+                        delete token;
+                        return nullptr;
+                    }
+                    token->value += info->value;
+                    delete info;
+                }
+                return token;
+            }
+        );
     }
 
     // add a new token parser
@@ -374,6 +506,12 @@ public:
                             bool keep_begin = true, bool keep_end = true, int type=-1) {
         add_parser(new TokenBeginEndPair(begin, end, keep_begin, keep_end, type));
     }
+
+    // add a new regex token parser
+    void add_regex(const std::string& regex, int type=-1) {
+        add_parser(new RegexTokenParser(regex, type));
+    }
+
 
     // set the default token type
     // This is the token type that will be used when a token
