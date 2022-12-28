@@ -1,5 +1,3 @@
-#pragma once
-
 #include <string>
 #include <vector>
 #include <memory>
@@ -128,7 +126,7 @@ public:
 
 // Represents a token that has been parsed from a string
 struct TokenInfo {
-    int token_type, type; // type is the parser that parsed the token, token_type is the type of the token
+    int token_type; // token_type is the type of the token
     std::string value; // the value of the token
     size_t line, column; // the line and column of the token
 };
@@ -137,7 +135,7 @@ struct TokenInfo {
 enum TokenParserType {
     Keyword = -1, // a keyword
     BeginEndPair = -2, // a pair of begin and end strings
-    Identifer = -3 // an identifier
+    Default = -3 // a default parsing (used for parsing either words either until a parser matches)
 };
 
 // Base class for all token parsers
@@ -153,7 +151,7 @@ public:
     virtual ~TokenParser() = default;
 
     // returns the type of the parser
-    virtual int type() const = 0;
+    virtual int parser_type() const = 0;
 
     // returns the type of the specific registered token
     int token_type() const {
@@ -182,7 +180,7 @@ public:
     }
 
     // returns the type of the parser
-    virtual int type() const override {
+    virtual int parser_type() const override {
         return Keyword;
     }
 };
@@ -243,7 +241,7 @@ public:
     }
 
     // returns the type of the parser
-    virtual int type() const override {
+    virtual int parser_type() const override {
         return BeginEndPair;
     }
 
@@ -316,7 +314,7 @@ public:
                 auto& keyword = static_cast<TokenKeyword&>(parser);
 
                 if (s.starts_with(keyword.keyword())) {
-                    auto token = new TokenInfo { keyword.token_type(), keyword.type(), keyword.keyword(), s.line(), s.column() };
+                    auto token = new TokenInfo { keyword.token_type(), keyword.keyword(), s.line(), s.column() };
                     s.next(keyword.keyword().size());
                     return token;
                 }
@@ -347,7 +345,7 @@ public:
                     result.erase(result.size() - begin_end.end().size(), begin_end.end().size());
                 }
 
-                auto token = new TokenInfo { begin_end.token_type(), begin_end.type(), result, s.line(), s.column() };
+                auto token = new TokenInfo { begin_end.token_type(), result, s.line(), s.column() };
 
                 s.next(pos + begin_end.end().size());
                 return token;
@@ -392,13 +390,17 @@ public:
     // The identifier is a token that does not match any of the token parsers
     // If the tokenize is not allowed to parse default identifiers it will throw an exception
     // with the position of the first unrecognized token
-    std::vector<TokenInfo> tokenize(const std::string& str, bool allow_default_identifiers = true) {
+    std::vector<TokenInfo> tokenize(const std::string& str, bool allow_default_identifiers = true, bool default_as_words = true) {
         FileTokenStream stream(str);
         std::vector<TokenInfo> tokens;
 
+        if (tokens.empty()) {
+
+        }
+
         auto try_parsers = [&]() -> bool {
             for (auto& rep : m_representations) {
-                auto token = m_callbacks[rep->type()](stream, *rep);
+                auto token = m_callbacks[rep->parser_type()](stream, *rep);
                 if (token != nullptr) {
                     tokens.push_back(*token);
                     delete token;
@@ -422,8 +424,20 @@ public:
             if (!allow_default_identifiers) {
                 throw TokenizerError(stream.line(), stream.column());
             }
-            auto token = new TokenInfo { m_default_type, Identifer, "", stream.line(), stream.column() };
+            auto token = new TokenInfo { m_default_type, "", stream.line(), stream.column() };
 
+            // parse the default identifier as a word
+            if (default_as_words) {
+                while (!stream.eof() && !stream.is_whitespace()) {
+                    token->value += stream.peek();
+                    stream.next();
+                }
+                tokens.push_back(*token);
+                delete token;
+                continue;
+            }
+
+            // parse the default identifier as a sequence of characters until a parser matches
             while (!stream.eof() && !stream.is_whitespace()) {
                 token->value += stream.peek();
                 stream.next();
