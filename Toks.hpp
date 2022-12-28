@@ -499,6 +499,13 @@ public:
         m_representations.push_back(std::unique_ptr<TokenParser>(parser));
     }
 
+    // make a parser and add it
+    template<typename T, typename... Args>
+    T &build_and_add_parser(Args&&... args) {
+        auto parser = new T(std::forward<Args>(args)...);
+        add_parser(parser);
+        return *parser;
+    }
 
     // add a new keyword token parser
     void add_keyword(const std::string& keyword, int type=-1) {
@@ -515,7 +522,6 @@ public:
     void add_regex(const std::string& regex, int type=-1) {
         add_parser(new RegexTokenParser(regex, type));
     }
-
 
     // set the default token type
     // This is the token type that will be used when a token
