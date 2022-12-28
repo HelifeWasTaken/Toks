@@ -358,6 +358,9 @@ private:
     // the callbacks for each token parser
     std::unordered_map<int, ParserCallback> m_callbacks;
 
+    // whether or not to parse each token as a word
+    bool m_default_as_words = true;
+
     class TokenizerError : public std::exception {
     private:
         std::string m_message;
@@ -480,6 +483,7 @@ public:
                     token->value += info->value;
                     delete info;
                 }
+                s.pop_state(false);
                 return token;
             }
         );
@@ -520,6 +524,26 @@ public:
         m_default_type = type;
     }
 
+    // Set the default token parser as words
+    // This means that the default token parser will parse the string as a sequence of words
+    // A word is a sequence of characters that are not spaces
+    // The default token parser will parse the string as a sequence of words
+    // and will return a token for each word
+    void set_default_as_words() {
+        m_default_as_words = true;
+    }
+
+    // Set the default token parser as until parser match
+    // This means that the default token parser will parse the string as a single token
+    // until it finds a token that matches one of the token parsers
+    // The default token parser will parse the string as a single token
+    // until it finds a token that matches one of the token parsers
+    // and will return a token for the string until the match
+    void set_default_as_until_parser_match() {
+        m_default_as_words = false;
+    }
+
+
     // tokenize a string
     // This will parse the string and return a vector of tokens
     // Each token will have a type, a value, and a position
@@ -528,14 +552,9 @@ public:
     // The identifier is a token that does not match any of the token parsers
     // If the tokenize is not allowed to parse default identifiers it will throw an exception
     // with the position of the first unrecognized token
-    std::vector<TokenInfo> tokenize(const std::string& str, bool allow_default_identifiers = true, bool default_as_words = true) {
+    std::vector<TokenInfo> tokenize(const std::string& str, bool allow_default_identifiers = true) {
         FileTokenStream stream(str);
         std::vector<TokenInfo> tokens;
-
-        if (tokens.empty()) {
-
-        }
-
         auto try_parsers = [&]() -> bool {
             for (auto& rep : m_representations) {
                 auto token = m_callbacks[rep->parser_type()](stream, *rep);
@@ -565,7 +584,7 @@ public:
             auto token = new TokenInfo { m_default_type, "", stream.line(), stream.column() };
 
             // parse the default identifier as a word
-            if (default_as_words) {
+            if (m_default_as_words) {
                 while (!stream.eof() && !stream.is_whitespace()) {
                     token->value += stream.peek();
                     stream.next();
