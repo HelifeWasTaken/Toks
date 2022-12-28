@@ -84,8 +84,9 @@ int main(void)
     auto tokens = tokenizer.tokenize("if (a == 1) { /* comment */ return \"jaaj\"; }");
 
     for (auto& token : tokens) {
-        std::cout << "A parser of type: " << token.type << " has parsed a token type: " << token.token_type
-                  << " it has for value " << token.value << " and was parsed at " << token.line << ":" << token.column;
+        std::cout << "A parsed has parsed a token type: " << token.token_type
+                  << " it has for value " << token.value
+                  << " and was parsed at " << token.line << ":" << token.column;
     }
 }
 ```
@@ -112,7 +113,7 @@ class NumberParser : public TokenParser {
 public:
     NumberParser(int type=-1) : TokenParser(type) {}
     
-    virtual int type() const override {
+    virtual int parser_type() const override {
         return 0; // Parser identifier user defined - Reserved ones are -1, -2, -3 as they are the builtin parsers
     }
 };
@@ -132,7 +133,7 @@ int main(void)
             char c = s.peek(); // get the current character
             if (!isdigit(c))
                 return nullptr;
-            auto tok = new TokenInfo { parser.token_type(), parser.type(), "", s.line(), s.column() }; // A new TokenInfo featuring the 
+            auto tok = new TokenInfo { parser.token_type(), "", s.line(), s.column() }; // A new TokenInfo featuring the 
             while (isdigit(c) && !s.eof()) {
                 tok.value += c;
                 s.next(); // Continue to the next value of stream
