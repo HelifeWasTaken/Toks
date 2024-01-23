@@ -257,3 +257,207 @@ stream.pop_state(false);
 
 // As this is a stack you can push multiple states but do not forget to pop them
 ```
+
+## Tokenizing a full language:
+
+```cpp
+#include "Toks.hpp"
+#include <tuple>
+#include <array>
+#include <algorithm>
+
+// The only thing that it does not handle is the case
+// where a string literal is escaped with a backslash
+// ex: "Hello \"World\""
+// This is because the tokenizer does not handle escape
+// sequences by default but you can add them yourself
+int main(void)
+{
+    hl::Toks tokenizer;
+
+    // 3 types <name, value, type>
+    enum {
+        Keyword,
+        BEPair,
+        Regex
+    };
+    struct _keywords { const char *name; const char *value; int type; };
+    std::array<_keywords> values {
+        // Real restricted keywords
+        { "If_Keyword", "if", Keyword },
+        { "Else_Keyword", "else", Keyword },
+        { "Return_Keyword", "return", Keyword },
+        { "While_Keyword", "while", Keyword },
+        { "For_Keyword", "for", Keyword },
+        { "In_Keyword", "in", Keyword },
+        { "Break_Keyword", "break", Keyword },
+        { "Continue_Keyword", "continue", Keyword },
+        { "Function_Keyword", "function", Keyword },
+        { "Class_Keyword", "class", Keyword },
+        { "New_Keyword", "new", Keyword },
+        { "This_Keyword", "this", Keyword },
+        { "Super_Keyword", "super", Keyword },
+        { "Import_Keyword", "import", Keyword },
+        { "From_Keyword", "from", Keyword },
+        { "As_Keyword", "as", Keyword },
+        { "Try_Keyword", "try", Keyword },
+        { "Catch_Keyword", "catch", Keyword },
+        { "Finally_Keyword", "finally", Keyword },
+        { "Throw_Keyword", "throw", Keyword },
+        { "Delete_Keyword", "delete", Keyword },
+        { "Typeof_Keyword", "typeof", Keyword },
+        { "Instanceof_Keyword", "instanceof", Keyword },
+        { "Var_Keyword", "var", Keyword },
+        { "Let_Keyword", "let", Keyword },
+        { "Const_Keyword", "const", Keyword },
+        { "Enum_Keyword", "enum", Keyword },
+        { "Export_Keyword", "export", Keyword },
+        { "Default_Keyword", "default", Keyword },
+        { "Case_Keyword", "case", Keyword },
+        { "Switch_Keyword", "switch", Keyword },
+        { "Extends_Keyword", "extends", Keyword },
+        { "Implements_Keyword", "implements", Keyword },
+        { "Interface_Keyword", "interface", Keyword },
+        { "Package_Keyword", "package", Keyword },
+        { "Private_Keyword", "private", Keyword },
+        { "Protected_Keyword", "protected", Keyword },
+        { "Public_Keyword", "public", Keyword },
+        { "Static_Keyword", "static", Keyword },
+        { "Yield_Keyword", "yield", Keyword },
+        { "Await_Keyword", "await", Keyword },
+        { "Async_Keyword", "async", Keyword },
+
+        // Keyword types
+        { "Int_Keyword", "int", Keyword },
+        { "Float_Keyword", "float", Keyword },
+        { "Double_Keyword", "double", Keyword },
+        { "Long_Keyword", "long", Keyword },
+        { "Short_Keyword", "short", Keyword },
+        { "Char_Keyword", "char", Keyword },
+        { "Boolean_Keyword", "boolean", Keyword },
+        { "Byte_Keyword", "byte", Keyword },
+        { "Void_Keyword", "void", Keyword },
+        { "Any_Keyword", "any", Keyword },
+        { "String_Keyword", "string", Keyword },
+        { "Object_Keyword", "object", Keyword },
+        { "Array_Keyword", "array", Keyword },
+        { "Map_Keyword", "map", Keyword },
+        { "Set_Keyword", "set", Keyword },
+
+        // Separators that can be nested (Treated as keywords)
+        { "Open_Paren", "(", Keyword },
+        { "Close_Paren", ")", Keyword },
+        { "Open_Brace", "{", Keyword },
+        { "Close_Brace", "}", Keyword },
+        { "Open_Bracket", "[", Keyword },
+        { "Close_Bracket", "]", Keyword },
+
+        // Literals
+        { "String_Literal_Double", "\"", BEPair },
+        { "String_Literal_Single", "'", BEPair },
+        { "String_Literal_Backtick", "`", BEPair },
+        { "True_Literal", "true", Keyword },
+        { "False_Literal", "false", Keyword },
+        { "Null_Literal", "null", Keyword },
+        { "Undefined_Literal", "undefined", Keyword },
+        { "NaN_Literal", "NaN", Keyword },
+        { "Infinity_Literal", "Infinity", Keyword },
+        { "Integer_Literal", "[0-9]+", Regex },
+        { "Float_Literal", "[0-9]+\\.[0-9]+", Regex },
+        { "Hex_Literal", "0x[0-9a-fA-F]+", Regex },
+        { "Binary_Literal", "0b[01]+", Regex },
+        { "Octal_Literal", "0o[0-7]+", Regex },
+
+        // Single Comments
+        { "Comment", "//.*", Regex },
+        { "Comment", "#.*", Regex },
+
+        // Whitespace
+        // { "Whitespace", "[ \t\r\n]+", Regex }, (Handled by default)
+
+        // 3 character operators
+        { "Rotate_Left", "<<<", Keyword },
+        { "Rotate_Right", ">>>", Keyword },
+        { "Strict_Equal", "===", Keyword },
+        { "Strict_Not_Equal", "!==", Keyword },
+        { "Left_Shift_Assign", "<<=", Keyword },
+        { "Right_Shift_Assign", ">>=", Keyword },
+        { "Power_Assign", "**=", Keyword },
+
+        // 2 character operators
+        { "Increment", "++", Keyword },
+        { "Equal", "==", Keyword },
+        { "Power", "**", Keyword },
+        { "Decrement", "--", Keyword },
+        { "Floor_Divide", "//", Keyword },
+        { "Not_Equal", "!=", Keyword },
+        { "Greater_Equal", ">=", Keyword },
+        { "Less_Equal", "<=", Keyword },
+        { "And", "&&", Keyword },
+        { "Or", "||", Keyword },
+        { "Left_Shift", "<<", Keyword },
+        { "Right_Shift", ">>", Keyword },
+        { "Plus_Assign", "+=", Keyword },
+        { "Minus_Assign", "-=", Keyword },
+        { "Multiply_Assign", "*=", Keyword },
+        { "Divide_Assign", "/=", Keyword },
+        { "Modulo_Assign", "%=", Keyword },
+        { "Bitwise_And_Assign", "&=", Keyword },
+        { "Bitwise_Or_Assign", "|=", Keyword },
+        { "Bitwise_Xor_Assign", "^=", Keyword },
+        { "Bitwise_Not_Assign", "~=", Keyword },
+        { "Arrow", "->", Keyword },
+
+        // 1 character operators
+        { "Plus", "+", Keyword },
+        { "Minus", "-", Keyword },
+        { "Multiply", "*", Keyword },
+        { "Divide", "/", Keyword },
+        { "Modulo", "%", Keyword },
+        { "Assign", "=", Keyword },
+        { "Greater", ">", Keyword },
+        { "Less", "<", Keyword },
+        { "Not", "!", Keyword },
+        { "Bitwise_And", "&", Keyword },
+        { "Bitwise_Or", "|", Keyword },
+        { "Bitwise_Xor", "^", Keyword },
+        { "Bitwise_Not", "~", Keyword },
+        { "Colon", ":", Keyword },
+        { "Question", "?", Keyword },
+
+        // 1 character separators
+        { "Semicolon", ";", Keyword },
+        { "Comma", ",", Keyword },
+        { "Dot", ".", Keyword }
+    };
+
+    // sort by length to make sure nothing is shadowed
+    std::sort(values.begin(), values.end(), [](const a &a, const a &b) {
+        return strlen(a.value) > strlen(b.value);
+    });
+
+    // add all the values
+    for (auto &v : values) {
+        switch (v.type) {
+            case Keyword: tokenizer.add_keyword(v.value, v.name); break;
+            case BEPair: tokenizer.add_begin_end_pair(v.value, v.value, false, false, v.name); break;
+            case Regex: tokenizer.add_regex(v.value, v.name); break;
+        }
+    }
+
+    // Add the multiline comment parser
+    tokenizer.add_begin_end_pair("/*", "*/", false, false, "Comment");
+
+    // Add the identifier parser (used when there is no match)
+    tokenizer.add_regex("[a-zA-Z_][a-zA-Z0-9_]*", "Identifier");
+
+    const std::string code = /* read file */;
+
+    for (auto &tok : tokenizer.tokenize(code, false /* do not parse default identifiers */)) {
+        std::cout << "Parsed a token type: " << tok.token_type
+                  << " it has for value " << tok.value
+                  << " and was parsed at " << tok.line << ":" << tok.column
+                  << std::endl;
+    }
+}
+```
