@@ -9,6 +9,7 @@
 
 namespace hl {
 
+
 // A simple token stream that can be used to tokenize a string
 // It is not meant to be used for large files, but rather for small
 // files that can be loaded into memory.
@@ -156,52 +157,96 @@ public:
 
 // Represents a token that has been parsed from a string
 struct TokenInfo {
-    int token_type; // token_type is the type of the token
+    const char *token_type; // token_type is the type of the token
     std::string value; // the value of the token
     size_t line, column; // the line and column of the token
+
+    TokenInfo(const char *token_type, const std::string& keyword, const size_t &line, const size_t &column)
+        : token_type(token_type), value(keyword), line(line), column(column)
+    {}
 };
 
-// Base class for all token parsers
-enum TokenParserType {
-    Keyword = -1, // a keyword
-    BeginEndPair = -2, // a pair of begin and end strings
-    Regex = -3, // a regex
-    Combinator = -4, // a combinator
-    Default = -5 // a default parsing (used for parsing either words either until a parser matches)
-};
+class TokenParser;
+class Tokenizer;
+
+// Represents how a specific token will be parsed from a string
+using ParserCallbackResult = std::unique_ptr<TokenInfo>;
+using ParserCallback = std::function<ParserCallbackResult(FileTokenStream&, TokenParser&)>;
+
+
+static ParserCallbackResult make_parser_callback_result(const char *token_type, const std::string& keyword, const size_t &line, const size_t &column)
+{
+    return std::make_unique<TokenInfo>(token_type, keyword, line, column);
+}
 
 // Base class for all token parsers
 class TokenParser {
 private:
-    int m_token_type;
+    const char *m_token_type;
+    const char *m_parser_name;
+
+public:
+    // Utility function to standardize the name of the parser
+    template<typename T>
+    static const char *GetParserTypeName() {
+        return typeid(T).name();
+    }
 
 protected:
     // the type of the token
-    TokenParser(int type) : m_token_type(type) {}
+    TokenParser(const char *token_type, const char *parser_name)
+        : m_token_type(token_type), m_parser_name(parser_name)
+    {}
 
 public:
     // Destructor
     virtual ~TokenParser() = default;
 
     // returns the type of the parser
-    virtual int parser_type() const = 0;
+    const char *parser_type() const {
+        return m_parser_name;
+    }
 
     // returns the type of the specific registered token
-    int token_type() const {
+    const char *token_type() const {
         return m_token_type;
     }
 };
 
+template<typename T>
+class TokenParserProxy : public TokenParser {
+public:
+    // the type of the token
+    TokenParserProxy(const char *token_type)
+        : TokenParser(token_type, GetParserTypeName<T>())
+    {}
+
+    // Destructor
+    virtual ~TokenParserProxy() = default;
+};
+
 // A token parser that parses a keyword
-class TokenKeyword : public TokenParser {
-private:
+class TokenKeyword : public TokenParserProxy<TokenKeyword> {
+public:
     // the keyword to parse
     std::string m_keyword;
 
+    static ParserCallbackResult parser_callback(FileTokenStream& s, TokenParser& parser) {
+        auto& keyword = static_cast<TokenKeyword&>(parser);
+
+        if (s.starts_with(keyword.keyword())) {
+            auto token = make_parser_callback_result(keyword.token_type(), keyword.keyword(), s.line(), s.column());
+            s.next(keyword.keyword().size());
+            return token;
+        }
+        return nullptr;
+    }
+
 public:
     // create a new keyword parser
-    TokenKeyword(const std::string& keyword, int type=-1)
-        : TokenParser(type), m_keyword(keyword)
+    TokenKeyword(const std::string& keyword, const char *type)
+        : TokenParserProxy(type)
+        , m_keyword(keyword)
     {}
 
     // Destructor
@@ -210,11 +255,6 @@ public:
     // returns the keyword
     const std::string& keyword() const {
         return m_keyword;
-    }
-
-    // returns the type of the parser
-    virtual int parser_type() const override {
-        return Keyword;
     }
 };
 
@@ -235,7 +275,37 @@ public:
 // TokenBeginEndPair comment("/*", "*/", false, true); If you do not want to keep the begin string -> " this is a comment */"
 // TokenBeginEndPair comment("/*", "*/", true, false); If you do not want to keep the end string -> "/* this is a comment "
 //
-class TokenBeginEndPair : public TokenParser {
+class TokenBeginEndPair : public TokenParserProxy<TokenBeginEndPair> {
+public:
+
+    static ParserCallbackResult parser_callback(FileTokenStream& s, TokenParser& parser) {
+        auto& begin_end = static_cast<TokenBeginEndPair&>(parser);
+
+        if (!s.starts_with(begin_end.begin())) {
+            return nullptr;
+        }
+
+        auto pos = s.find(begin_end.end(), begin_end.begin().size());
+
+        if (pos == std::string::npos) {
+            return nullptr;
+        }
+
+        std::string result = s.substr(0, pos + begin_end.end().size());
+
+        if (!begin_end.keep_begin()) {
+            result.erase(0, begin_end.begin().size());
+        }
+        if (!begin_end.keep_end()) {
+            result.erase(result.size() - begin_end.end().size(), begin_end.end().size());
+        }
+
+        auto token = make_parser_callback_result(begin_end.token_type(), result, s.line(), s.column());
+
+        s.next(pos + begin_end.end().size());
+        return token;
+    }
+
 private:
     // the begin and end strings
     std::string m_begin;
@@ -248,9 +318,13 @@ private:
 public:
     // create a new begin/end pair parser
     TokenBeginEndPair(const std::string& begin, const std::string& end,
-                        bool keep_begin = true, bool keep_end = true, int type=-1)
-        : TokenParser(type), m_begin(begin), m_end(end),
-            m_keep_begin(keep_begin), m_keep_end(keep_end)
+                    bool keep_begin, bool keep_end,
+                    const char *type)
+        : TokenParserProxy(type)
+        , m_begin(begin)
+        , m_end(end)
+        , m_keep_begin(keep_begin)
+        , m_keep_end(keep_end)
     {}
 
     // returns whether or not to keep the begin string
@@ -273,24 +347,36 @@ public:
         return m_end;
     }
 
-    // returns the type of the parser
-    virtual int parser_type() const override {
-        return BeginEndPair;
-    }
-
     // Destructor
     virtual ~TokenBeginEndPair() = default;
 };
 
-class RegexTokenParser : public TokenParser {
+class RegexParser : public TokenParserProxy<RegexParser> {
+public:
+
+    static ParserCallbackResult parser_callback(FileTokenStream& s, TokenParser& parser) {
+        auto& regex = static_cast<RegexParser&>(parser);
+
+        std::smatch match;
+        if (s.regex_match(regex.regex(), match)) {
+            if (match.size() == 0) {
+                return nullptr;
+            }
+            auto token = make_parser_callback_result(regex.token_type(), match.str(), s.line(), s.column());
+            s.next(match.position() + match.length());
+            return token;
+        }
+        return nullptr;
+    }
+
 private:
-    // the regex to parse
     std::regex m_regex;
 
 public:
     // create a new regex parser
-    RegexTokenParser(const std::string& regex, int type=-1)
-        : TokenParser(type), m_regex(regex)
+    RegexParser(const std::string& regex, const char *type)
+        : TokenParserProxy(type)
+        , m_regex(regex)
     {}
 
     // returns the regex
@@ -298,34 +384,39 @@ public:
         return m_regex;
     }
 
-    // returns the type of the parser
-    virtual int parser_type() const override {
-        return Regex;
-    }
-
     // Destructor
-    virtual ~RegexTokenParser() = default;
+    virtual ~RegexParser() = default;
 };
 
-class CombinatorTokenParser : public TokenParser {
+// Implements a combinator parser (Works like a AND operator)
+class CombinatorParser : public TokenParserProxy<CombinatorParser> {
 private:
-    // the parsers to combine
     std::vector<std::unique_ptr<TokenParser>> m_parsers;
+    Tokenizer& m_tokenizer_ref;
 
 public:
     // create a new combinator parser
-    CombinatorTokenParser(int type=-1)
-        : TokenParser(type)
+    CombinatorParser(const char *type, Tokenizer& tokenizer)
+        : TokenParserProxy(type)
+        , m_tokenizer_ref(tokenizer)
     {}
 
-    // Add a parser to the combinator
-    void add_parser(std::unique_ptr<TokenParser>&& parser) {
+    // add a new parser
+    void add_parser(std::unique_ptr<TokenParser> &&parser) {
         m_parsers.push_back(std::move(parser));
     }
 
-    // Add a parser to the combinator
+    // add a new parser
     void add_parser(TokenParser* parser) {
         m_parsers.push_back(std::unique_ptr<TokenParser>(parser));
+    }
+
+    // make a parser and add it
+    template<typename T, typename... Args>
+    T &build_and_add_parser(Args&&... args) {
+        auto parser = new T(std::forward<Args>(args)...);
+        add_parser(parser);
+        return *parser;
     }
 
     // returns the parsers
@@ -333,30 +424,28 @@ public:
         return m_parsers;
     }
 
-    // returns the type of the parser
-    virtual int parser_type() const override {
-        return Combinator;
+    // Destructor
+    virtual ~CombinatorParser() = default;
+
+    // Get reference to the tokenizer
+    Tokenizer& tokenizer() {
+        return m_tokenizer_ref;
     }
 
-    // Destructor
-    virtual ~CombinatorTokenParser() = default;
+    static ParserCallbackResult parser_callback(FileTokenStream& s, TokenParser& parser);
 };
 
 // The tokenizer class is used to parse a string into tokens
 // It will orchestrate the parsing of the string, and will
 // call the appropriate parser for each token
 class Tokenizer {
-public:
-    // Represents how a specific token will be parsed from a string
-    using ParserCallback = std::function<TokenInfo *(FileTokenStream&, TokenParser&)>;
-
 private:
     // the default token type
-    int m_default_type = -1;
+    const char *m_default_type = "__default__";
     // the token parsers
     std::vector<std::unique_ptr<TokenParser>> m_representations;
     // the callbacks for each token parser
-    std::unordered_map<int, ParserCallback> m_callbacks;
+    std::unordered_map<const char *, ParserCallback> m_callbacks;
 
     // whether or not to parse each token as a word
     bool m_default_as_words = true;
@@ -389,13 +478,9 @@ private:
 
 public:
     // register a new token parser
-    void register_parser_callback(int type, ParserCallback &&callback) {
-        m_callbacks[type] = callback;
-    }
-
-    // register a new token parser
-    void register_parser_callback(int type, const ParserCallback &callback) {
-        m_callbacks[type] = callback;
+    template<typename T>
+    void register_parser_callback() {
+        m_callbacks[TokenParser::GetParserTypeName<T>()] = T::parser_callback;
     }
 
     // create a new tokenizer
@@ -405,97 +490,19 @@ public:
     // - BeginEndPair
     Tokenizer()
     {
-        register_parser_callback(Keyword,
-            [](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
-                auto& keyword = static_cast<TokenKeyword&>(parser);
-
-                if (s.starts_with(keyword.keyword())) {
-                    auto token = new TokenInfo { keyword.token_type(), keyword.keyword(), s.line(), s.column() };
-                    s.next(keyword.keyword().size());
-                    return token;
-                }
-                return nullptr;
-            }
-        );
-
-        register_parser_callback(BeginEndPair,
-            [](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
-                auto& begin_end = static_cast<TokenBeginEndPair&>(parser);
-
-                if (!s.starts_with(begin_end.begin())) {
-                    return nullptr;
-                }
-
-                auto pos = s.find(begin_end.end());
-
-                if (pos == std::string::npos) {
-                    return nullptr;
-                }
-
-                std::string result = s.substr(0, pos + begin_end.end().size());
-
-                if (!begin_end.keep_begin()) {
-                    result.erase(0, begin_end.begin().size());
-                }
-                if (!begin_end.keep_end()) {
-                    result.erase(result.size() - begin_end.end().size(), begin_end.end().size());
-                }
-
-                auto token = new TokenInfo { begin_end.token_type(), result, s.line(), s.column() };
-
-                s.next(pos + begin_end.end().size());
-                return token;
-            }
-        );
-
-        register_parser_callback(Regex,
-            [](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
-                auto& regex = static_cast<RegexTokenParser&>(parser);
-
-                std::smatch match;
-                if (s.regex_match(regex.regex(), match)) {
-                    if (match.size() == 0) {
-                        return nullptr;
-                    }
-                    auto token = new TokenInfo { regex.token_type(), match.str(), s.line(), s.column() };
-                    s.next(match.position() + match.length());
-                    return token;
-                }
-                return nullptr;
-            }
-        );
-
-        register_parser_callback(Combinator,
-            [this](FileTokenStream& s, TokenParser& parser) -> TokenInfo * {
-                auto& combinator = static_cast<CombinatorTokenParser&>(parser);
-                s.push_state();
-
-                auto token = new TokenInfo { combinator.token_type(), "", s.line(), s.column() };
-
-                for (auto& p : combinator.parsers()) {
-                    auto info = this->m_callbacks[p->parser_type()](s, *p);
-
-                    if (info == nullptr) {
-                        s.pop_state();
-                        delete token;
-                        return nullptr;
-                    }
-                    token->value += info->value;
-                    delete info;
-                }
-                s.pop_state(false);
-                return token;
-            }
-        );
+        register_parser_callback<TokenKeyword>();
+        register_parser_callback<TokenBeginEndPair>();
+        register_parser_callback<RegexParser>();
+        register_parser_callback<CombinatorParser>();
     }
 
     // add a new token parser
-    void add_parser(std::unique_ptr<TokenParser> &&parser) {
+    inline void add_parser(std::unique_ptr<TokenParser> &&parser) {
         m_representations.push_back(std::move(parser));
     }
 
     // add a new token parser
-    void add_parser(TokenParser* parser) {
+    inline void add_parser(TokenParser* parser) {
         m_representations.push_back(std::unique_ptr<TokenParser>(parser));
     }
 
@@ -508,25 +515,26 @@ public:
     }
 
     // add a new keyword token parser
-    void add_keyword(const std::string& keyword, int type=-1) {
+    void add_keyword(const std::string& keyword, const char *type) {
         add_parser(new TokenKeyword(keyword, type));
     }
 
     // add a new begin/end pair token parser
     void add_begin_end_pair(const std::string& begin, const std::string& end,
-                            bool keep_begin = true, bool keep_end = true, int type=-1) {
+                            bool keep_begin, bool keep_end,
+                            const char *type) {
         add_parser(new TokenBeginEndPair(begin, end, keep_begin, keep_end, type));
     }
 
     // add a new regex token parser
-    void add_regex(const std::string& regex, int type=-1) {
-        add_parser(new RegexTokenParser(regex, type));
+    void add_regex(const std::string& regex, const char *type) {
+        add_parser(new RegexParser(regex, type));
     }
 
     // set the default token type
     // This is the token type that will be used when a token
     // is not recognized by any of the token parsers and is parsed as an identifier
-    void set_default_type(int type) {
+    void set_default_type(const char *type) {
         m_default_type = type;
     }
 
@@ -566,7 +574,6 @@ public:
                 auto token = m_callbacks[rep->parser_type()](stream, *rep);
                 if (token != nullptr) {
                     tokens.push_back(*token);
-                    delete token;
                     return true;
                 }
             }
@@ -587,7 +594,8 @@ public:
             if (!allow_default_identifiers) {
                 throw TokenizerError(stream.line(), stream.column());
             }
-            auto token = new TokenInfo { m_default_type, "", stream.line(), stream.column() };
+
+            auto token = make_parser_callback_result(m_default_type, "", stream.line(), stream.column());
 
             // parse the default identifier as a word
             if (m_default_as_words) {
@@ -596,7 +604,6 @@ public:
                     stream.next();
                 }
                 tokens.push_back(*token);
-                delete token;
                 continue;
             }
 
@@ -611,17 +618,47 @@ public:
                     break;
                 }
             }
+
             if (token != nullptr) {
                 if (token->value.empty()) {
                     throw TokenizerError(stream.line(), stream.column());
                 } else {
                     tokens.push_back(*token);
-                    delete token;
                 }
             }
         }
         return tokens;
     }
+
+    // returns the callbacks for each token parser
+    const std::unordered_map<const char *, ParserCallback>& callbacks() const {
+        return m_callbacks;
+    }
+
+
 };
+
+ParserCallbackResult CombinatorParser::parser_callback(FileTokenStream& s, TokenParser& parser) {
+    auto& combinator = dynamic_cast<CombinatorParser&>(parser);
+    s.push_state();
+
+    auto token = make_parser_callback_result(combinator.token_type(), "", s.line(), s.column());
+
+    for (auto& p : combinator.parsers()) {
+        auto info = combinator.m_tokenizer_ref.callbacks().at(p->parser_type())(s, *p);
+
+        if (info == nullptr) {
+            s.pop_state();
+            return nullptr;
+        }
+        token->value += info->value;
+    }
+    s.pop_state(false);
+    return token;
+}
+
+using Toks = Tokenizer;
+template<typename T>
+using ToksParser = TokenParserProxy<T>;
 
 }
